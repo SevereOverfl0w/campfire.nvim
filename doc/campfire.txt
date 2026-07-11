@@ -1,0 +1,244 @@
+*campfire.txt*  campfire.nvim — Clojure nREPL support for Neovim
+
+INTRODUCTION                                    *campfire*
+Campfire is a Neovim-only Clojure nREPL client with a Lua core and
+fireplace-style editing flow. Commands are unprefixed (e.g. :Connect, :Eval).
+
+CONNECTING                                      *campfire-connect*
+
+:Connect [URL] [<template>] [key=value]... [+form]
+
+Bare invocation walks up from the current buffer to find a port file
+(`.nrepl-port`, `repl-port`, `target/repl-port`,
+`.shadow-cljs/nrepl.port`) and connects to it:
+>
+	:Connect
+<
+With a URL or port, connects directly and auto-detects the runtime:
+>
+	:Connect 7888
+	:Connect nrepl://localhost:7888
+	:Connect nrepl+unix:///tmp/nrepl.sock
+	:Connect .nrepl-port
+<
+When no connection exists, eval/docs/completion/tests auto-connect by
+searching upward for the same port files.
+
+Connect with a template (named bootstrap from the registry):
+>
+	:Connect <node>
+	:Connect <shadow:app>
+	:Connect <figwheel-main:dev>
+<
+Attach a label (nickname for management commands). Labels are most
+useful when several connections share the same runtime and you want a
+clear handle to address each:
+>
+	:Connect 7888 <shadow:frontend> label=ui
+	:Connect 7888 <shadow:worker> label=worker
+	:Connect 7888 +(shadow.cljs.devtools.api/repl :test) label=test
+<
+With labels, :Disconnect ui, :Scope worker, and the
+:Connections list all stay readable.
+
+Use an ad-hoc bootstrap form (rest of line after `+` is passed verbatim):
+>
+	:Connect +(cider.piggieback/cljs-repl (cljs.repl.node/repl-env))
+	:Connect 7888 label=ui +(shadow.cljs.devtools.api/repl :frontend)
+<
+Reserved `key=value` flags:
+
+	label=<name>	Optional nickname. Used by :Disconnect and
+			friends.
+	path=<dir>	Project path. Defaults to the nearest ancestor
+			directory containing `deps.edn`, `project.clj`,
+			`shadow-cljs.edn`, `bb.edn`, `.nrepl-port`, or
+			`.shadow-cljs/nrepl.port`; falls back to cwd.
+	lang=<runtime>	Force runtime. Skips auto-detection.
+
+TEMPLATES                                       *campfire-templates*
+Built-in templates:
+
+	<node>			piggieback + cljs.repl.node
+	<browser>		piggieback + cljs.repl.browser
+	<nbb>			native nbb (no bootstrap)
+	<figwheel>		figwheel-sidecar
+	<figwheel-main:BUILD>	figwheel.main with named build
+	<shadow:BUILD>		shadow-cljs with named build
+
+CONNECTIONS                                     *campfire-connections*
+:Connections			List live connections with labels, URLs,
+				paths, and detected runtimes.
+:Disconnect [label]		Close a connection. Without an argument,
+				closes the buffer's current connection.
+:Reconnect [label]		Disconnect and reconnect with the same
+				parameters. Useful after `:cljs/quit` or
+				transport drop.
+
+:Scope {label}			Pin every buffer of the current file's
+				extension under the same project root
+				to {label}. So `:Scope bb` in a
+				`.clj` buffer routes every `.clj` file
+				in this project to the bb connection;
+				`.cljs` etc. keep their own defaults.
+				Tab-completes to live connection labels.
+
+:Scope! {label}			Pin only this buffer to {label}. Wins
+				over the (root, ext) map.
+:Scope!				Clear this buffer's pin (the (root, ext)
+				map still applies if set).
+:Scope				Print the current buffer's resolved
+				scope.
+
+Routing precedence:
+	1. buffer pin (`:Scope!`)
+	2. (project root, file extension) map (`:Scope`)
+	3. file-extension default:
+		.clj  → clj	.cljs → cljs	.bb → bb
+		.cljc → clj	.lg   → lg
+	4. first registered client (last resort)
+
+Project root is detected by walking up from the buffer for any of
+`deps.edn`, `project.clj`, `shadow-cljs.edn`, `bb.edn`, `.nrepl-port`,
+`.shadow-cljs/nrepl.port`, `.git`.
+
+Scope persists for the editor session only.
+
+EVALUATION                                      *campfire-eval*
+:Eval {expr}		Evaluate in detected runtime.
+cp{motion}		Evaluate and print motion text.
+cpp			Evaluate the innermost form at the cursor.
+c!{motion}		Evaluate motion text and replace it with the
+			printed value. User session, so side-effects fire
+			(same risk model as `cp`). On error the buffer is
+			untouched and the error is echoed.
+c!!			Evaluate the innermost form and replace it.
+:Last			Open eval output in a preview window and follow the
+			newest eval: while open it refreshes as you evaluate.
+			Closing it stops the tracking.
+:{count}Last		Pin the preview to the {count}th-newest entry (`:2Last`
+			= one before the latest). A pinned preview does not
+			follow; re-run bare :Last to resume following.
+
+DOCUMENTATION                                   *campfire-docs*
+:Doc {symbol}		Open docs in scratch buffer.
+:DocHover {symbol}	Show docs in floating window.
+:Source {symbol}	Jump to source when info contains location.
+K			Runs :DocHover via 'keywordprg'.
+[D ]D			Jump to source for symbol under cursor.
+
+MACROEXPAND                                     *campfire-macroexpand*
+:MacroExpand [form]		Run `macroexpand-all` on the form (or the
+				form under the cursor if no argument).
+				Output goes to a floating hover. Bang
+				(`:MacroExpand!`) opens a persistent
+				`clojure`-filetype split instead.
+:MacroExpand1 [form]		`macroexpand-1`. Same bang behaviour.
+cm{motion}			Macroexpand-all motion text into a hover.
+cmm				Macroexpand-all innermost form.
+cm1{motion}, cm1		Macroexpand-1 once.
+
+`{count}cm1` iterates `macroexpand-1` `{count}` times (e.g. `3cm1`
+applies it three times), stopping early on a fixed point. The header
+line `;; macroexpand-1 ×N` records how many iterations actually ran.
+Inside the hover, press `r` or `1` to run `macroexpand-1` once more on
+the current expansion (mirrors cider's macroexpand-again).
+
+Prefers cider-nrepl's `macroexpand` op when available (pretty-printed
+via `pp/code-dispatch`, namespace tidied). Falls back on JVM clj to
+plain `eval` of `(<expander> '<form>)`. cljs without the op errors out.
+
+TESTS                                           *campfire-tests*
+:RunTests [ns]		Run namespace tests.
+:RunAllTests		Run all tests.
+:RunTestExpr {expr}	Run explicit test expression.
+
+The target namespace is reloaded before tests run; a load failure
+surfaces as an error entry. Failures and errors populate the quickfix
+list. On the lg runtime filenames and line numbers are unavailable, so
+those entries carry an empty filename and lnum=0.
+
+NONE-LS                                         *campfire-none-ls*
+Register Campfire sources in null-ls setup. `sources()` returns a list,
+so splice it into your sources with |vim.list_extend|:
+>lua
+  local null_ls = require('null-ls')
+
+  local sources = { null_ls.builtins.completion.spell }
+  vim.list_extend(sources, require('campfire.none_ls').sources())
+
+  null_ls.setup({ sources = sources })
+<
+require('campfire.none_ls').adapters() exposes raw completion, hover,
+signature, source, and formatting request wrappers over Campfire data
+APIs.
+
+COMPLETION                                      *campfire-completion*
+Buffer-local 'omnifunc' is set to campfire#omnifunc on connect, so |i_CTRL-X_CTRL-O|
+completes with no extra setup.
+
+For |nvim-cmp|, the source self-registers as `campfire` when cmp is installed
+(via after/plugin, like cmp-buffer), so just name it in your clojure sources —
+no setup call:
+>lua
+  require('cmp').setup.filetype('clojure', {
+    sources = { { name = 'campfire' }, { name = 'buffer' } },
+  })
+<
+Lazy-loaders whose cmp loads after Campfire can force registration once cmp is
+available with require('campfire.cmp').register() (idempotent; a no-op returning
+false when nvim-cmp isn't installed).
+
+Arglists show as the item detail; the doc window shows arglists +
+docstring. Symbol kinds map to LSP CompletionItemKind (function/macro →
+Function, var → Variable, namespace → Module, …).
+
+CONFIGURATION                                   *campfire-configuration*
+Use require('campfire').setup({ history_size = 100 }) to override
+defaults. :checkhealth campfire reports health information.
+
+PRETTY-PRINT                                    *campfire-pretty*
+
+Campfire stamps |nREPL| print middleware keys onto each `eval` message
+so the server pretty-prints the result.
+
+	g:campfire_pretty                   v:true     master toggle
+	g:campfire_pretty_fn                autodetect (cider.nrepl.pprint/*)
+	g:campfire_pretty_width             min(&columns, winwidth(0))
+	g:campfire_pretty_length            unset
+	g:campfire_pretty_level             unset
+	g:campfire_pretty_meta              v:false
+	g:campfire_pretty_readably          v:true
+	g:campfire_pretty_namespace_maps    v:true
+	g:campfire_pretty_options           {}         merged into options
+	g:Campfire_pretty_func              unset      see below
+
+width/length/level translate to the per-printer key understood by the
+chosen `g:campfire_pretty_fn`. Other knobs pass through verbatim.
+
+`g:campfire_pretty_options` is merged into `nrepl.middleware.print/
+options` after the flat knobs; user keys win on conflict.
+
+                                                *g:Campfire_pretty_func*
+A Funcref, function name, or Lua callable invoked last with the fully
+stamped eval message. It must return the message it wants sent:
+>
+	function! s:Pretty(msg) abort
+	  if a:msg.code =~# '\<spec/explain\>'
+	    let a:msg['nrepl.middleware.print/print']   = 'cider.nrepl.pprint/puget-pprint'
+	    let a:msg['nrepl.middleware.print/options'] = #{ width: 60 }
+	  endif
+	  return a:msg
+	endfunction
+	let g:Campfire_pretty_func = function('s:Pretty')
+<
+Always return; relying on mutation alone is unsafe across the
+vim/Lua boundary.
+
+FORMAT                                          *campfire-format*
+With cider-nrepl, `gq{motion}` and `:Format` send the selected
+lines through the format-code op and replace them with the pretty
+result. The none-ls source `campfire_formatting` exposes the same to
+LSP-style formatters.
+
+ vim:tw=78:et:ft=help:norl:
