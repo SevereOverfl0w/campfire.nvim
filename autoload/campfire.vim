@@ -72,6 +72,14 @@ function! campfire#run_test_expr_command(bang, args) abort
   return luaeval("require('campfire.tests').command(_A)", [a:bang, 0, 0, a:args, 'expr'])
 endfunction
 
+function! campfire#run_lazytest_command(bang, line1, line2, args) abort
+  return luaeval("require('campfire.tests').command(_A)", [a:bang, a:line1, a:line2, a:args, '', 'lazytest'])
+endfunction
+
+function! campfire#run_lazytest_expr_command(bang, args) abort
+  return luaeval("require('campfire.tests').command(_A)", [a:bang, 0, 0, a:args, 'expr', 'lazytest'])
+endfunction
+
 function! campfire#doc_command(kind, args) abort
   return luaeval("require('campfire.ui').command(_A)", [a:kind, a:args])
 endfunction
@@ -206,6 +214,10 @@ function! campfire#activate() abort
         \ RunTests exe campfire#run_tests_command(<bang>0, <line1>, <line2>, <q-args>)
   command! -buffer -bang -nargs=* RunAllTests exe campfire#run_tests_command(<bang>0, 0, 0, <q-args>)
   command! -buffer -bang -nargs=* -complete=customlist,campfire#eval_complete RunTestExpr exe campfire#run_test_expr_command(<bang>0, <q-args>)
+  command! -buffer -bar -bang -range=0 -nargs=* -complete=customlist,campfire#ns_complete
+        \ RunLazyTest exe campfire#run_lazytest_command(<bang>0, <line1>, <line2>, <q-args>)
+  command! -buffer -bang -nargs=* RunAllLazyTests exe campfire#run_lazytest_command(<bang>0, 0, 0, <q-args>)
+  command! -buffer -bang -nargs=* -complete=customlist,campfire#eval_complete RunLazyTestExpr exe campfire#run_lazytest_expr_command(<bang>0, <q-args>)
   command! -buffer -bar -nargs=* -complete=customlist,campfire#eval_complete Doc exe campfire#doc_command('doc', <q-args>)
   command! -buffer -bar -nargs=* -complete=customlist,campfire#eval_complete DocHover exe campfire#doc_command('hover', <q-args>)
   command! -buffer -bar -nargs=* -complete=customlist,campfire#eval_complete Source exe campfire#doc_command('source', <q-args>)

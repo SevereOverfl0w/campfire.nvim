@@ -401,6 +401,112 @@ local function build_lg_wrap(kind, opts)
   return "(do " .. load_guard .. guarded_run .. ")"
 end
 
+-- lazytest is a distinct framework (defdescribe/describe/it/expect, not deftest),
+-- so it gets its own eval wrap rather than a runtime strategy. lazytest.repl
+-- exposes run-all-tests / run-tests / run-test-var; we hand them a custom reporter
+-- via lazytest's native :output config hook. The reporter emits the same
+-- file<TAB>line<TAB>kind<TAB>name TSV rows the clojure.test path emits, so
+-- parse_line / handle_output stream it into the quickfix with no new plumbing.
+--
+-- Per failure the reporter has richer data than clojure.test exposes: the exact
+-- :file/:line of the failing `expect` (assertion site) — or the throw site for an
+-- uncaught error — plus :expected/:actual/:evaluated and the thrown Throwable. It
+-- rebuilds a jumpable stack from that Throwable (classpath paths reconstructed
+-- from each frame's class, like stacktrace.error_site), trimmed at the first
+-- lazytest.* frame so only user code shows. Runs on the JVM (clj/bb). The eval is
+-- pinned to `user` (see request) so the reporter can use bare clojure.core fns.
+local LAZYTEST_REPORTER = [==[
+(fn cf-report [config m]
+  (let [t \tab
+        P (fn [& xs] (println (apply str xs)))]
+    (case (:type m)
+      :fail
+      (let [thrown (:thrown m)
+            err? (not (lazytest.expectation-failed/ex-failed? thrown))
+            hist (:lazytest.runner/suite-history config)
+            vsym (last (keep :var hist))
+            id (str (or vsym (:ns m)))
+            descs (->> hist (filter (fn [s] (= :lazytest/suite (:type s)))) (keep :doc))
+            ctx (clojure.string/join " > " (concat descs (when (:doc m) [(:doc m)])))
+            tmap (try (Throwable->map thrown) (catch Throwable _ nil))
+            class->path (fn [cls file]
+                          (let [s (str cls)
+                                nsp (first (clojure.string/split s #"\$"))
+                                dir (when (re-find #"\." nsp)
+                                      (-> nsp
+                                          (clojure.string/replace #"\.[^.]+$" "")
+                                          (clojure.string/replace "-" "_")
+                                          (clojure.string/replace "." "/")))]
+                            (if dir (str dir "/" file) file)))
+            frames (->> (:trace tmap)
+                        (take-while (fn [fr] (not (clojure.string/starts-with? (str (nth fr 0)) "lazytest."))))
+                        (keep (fn [fr]
+                                (let [cls (nth fr 0) mth (nth fr 1)
+                                      file (nth fr 2) line (nth fr 3)]
+                                  (when (and (string? file) (integer? line) (pos? line))
+                                    {:path (class->path cls file) :file file :line line
+                                     :name (str cls "/" mth)}))))
+                        (take 24)
+                        vec)
+            hfile (if (and err? (seq frames)) (:path (first frames)) (:file m))
+            hline (if (and err? (seq frames)) (:line (first frames)) (:line m))]
+        (P hfile t hline t (if err? "error" "fail") t
+           id " | " ctx (when (:message m) (str " | " (:message m))))
+        (P "" t 0 t "detail" t "expected: " (pr-str (:expected m)))
+        (when (contains? m :actual)
+          (P "" t 0 t "detail" t "actual: " (pr-str (:actual m))))
+        (when-let [ev (seq (rest (:evaluated m)))]
+          (P "" t 0 t "detail" t "evaluated: " (pr-str (apply list ev))))
+        (when err?
+          (P "" t 0 t "detail" t "error: " (.getName (class thrown)) ": " (ex-message thrown))
+          (when-let [d (ex-data thrown)]
+            (P "" t 0 t "detail" t "ex-data: " (pr-str d)))
+          (doseq [fr frames]
+            (P (:path fr) t (:line fr) t "frame" t (:name fr) " (" (:file fr) ":" (:line fr) ")"))))
+      :end-test-run
+      (let [{:keys [total pass fail]} (lazytest.results/summarize (:results m))]
+        (P "" t 0 t "summary" t
+           (format "Ran %d test case%s — %d pass, %d fail"
+                   total (if (= 1 total) "" "s") pass fail)))
+      nil)))
+]==]
+
+-- Assemble the lazytest eval: require the framework nses (+ the involved test
+-- nses :reload so a stale def can't pass and find-var resolves), bind the reporter
+-- to R, then dispatch to the matching lazytest.repl entry point. Vars are resolved
+-- with find-var (runtime) rather than #' (read-time) so the require inside the same
+-- top-level do runs first. `all` runs whatever's already loaded — lazytest parity
+-- with run-all-tests — so it skips the reload guard.
+local function build_lazytest_wrap(kind, opts)
+  local vars = opts.vars or {}
+  local nses = opts.nses or {}
+  local run
+  if kind == 'all' or (#vars == 0 and #nses == 0) then
+    run = '(lazytest.repl/run-all-tests {:output [R]})'
+  else
+    local parts = {}
+    if #nses > 0 then
+      parts[#parts + 1] = "(lazytest.repl/run-tests '[" .. table.concat(nses, ' ') .. '] {:output [R]})'
+    end
+    for _, v in ipairs(vars) do
+      parts[#parts + 1] = "(lazytest.repl/run-test-var (find-var '" .. v .. ") {:output [R]})"
+    end
+    run = #parts == 1 and parts[1] or ('(do ' .. table.concat(parts, ' ') .. ')')
+  end
+
+  local reload = ''
+  local to_load = involved_nses(opts)
+  if kind ~= 'all' and #to_load > 0 then
+    reload = '(require ' .. quoted(to_load, "'") .. ' :reload) '
+  end
+
+  return '(do '
+    .. "(require '[lazytest.repl] '[lazytest.results] "
+    .. "'[lazytest.expectation-failed] '[clojure.string]) "
+    .. reload
+    .. '(let [R ' .. LAZYTEST_REPORTER .. '] ' .. run .. '))'
+end
+
 -- clj and bb share one spec value; the keys stay distinct so lang routing and
 -- per-lang tags remain independent.
 local STRATEGIES = {
@@ -480,6 +586,14 @@ function M.request(kind, opts)
 
   if kind == 'expr' then
     return { op = 'eval', code = opts.expr, session = opts.session, scope = 'user' }
+  end
+
+  -- lazytest is its own framework, not a runtime strategy: bypass the cider ops
+  -- and clojure.test/cljs.test wraps entirely. Pinned to `user` so the reporter's
+  -- bare clojure.core fns resolve regardless of the buffer's :refer-clojure.
+  if opts.framework == 'lazytest' then
+    local code = build_lazytest_wrap(kind, opts)
+    return { op = 'eval', code = code, session = opts.session, scope = 'user', ns = 'user' }
   end
 
   local use_op = ops and ops['test-var-query']
@@ -1054,7 +1168,7 @@ local function label_for(kind, opts)
 end
 
 function M.command(args)
-  local bang, line1, _, text, override = args[1], args[2], args[3], args[4], args[5]
+  local bang, line1, _, text, override, framework = args[1], args[2], args[3], args[4], args[5], args[6]
   text = text or ''
   local open_qf = bang == 0
 
@@ -1078,7 +1192,9 @@ function M.command(args)
   --   :.RunTests a b a/x   → mix of nses (run-tests) and vars (test-vars)
   local kind, opts
   if line1 == 0 then
-    if #tokens == 0 then
+    -- lazytest has no name-regex filtering (its filters are metadata/focus based),
+    -- so :0RunLazyTest / :RunAllLazyTests ignore any pattern tokens and run all.
+    if #tokens == 0 or framework == 'lazytest' then
       kind, opts = 'all', {}
     else
       kind, opts = 'all', { patterns = tokens }
@@ -1100,6 +1216,7 @@ function M.command(args)
     end
   end
 
+  opts.framework = framework
   opts.open_qf = open_qf
   opts.label = label_for(kind, opts)
   local _, err = M.run(kind, opts)

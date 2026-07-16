@@ -158,6 +158,17 @@ surfaces as an error entry. Failures and errors populate the quickfix
 list. On the lg runtime filenames and line numbers are unavailable, so
 those entries carry an empty filename and lnum=0.
 
+LAZYTEST                                         *campfire-lazytest*
+Lazytest (https://github.com/NoahTheDuke/lazytest) equivalents of the
+above, on clj/bb:
+
+:RunLazyTest [ns|var]	As :RunTests, under Lazytest.
+:RunAllLazyTests	As :RunAllTests, under Lazytest.
+:RunLazyTestExpr {expr}	As :RunTestExpr.
+
+Failures jump to the `expect`; errors to the throw site, with the stack
+appended.
+
 NONE-LS                                         *campfire-none-ls*
 Register Campfire sources in null-ls setup. `sources()` returns a list,
 so splice it into your sources with |vim.list_extend|:
