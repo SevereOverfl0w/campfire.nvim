@@ -113,12 +113,24 @@ c!{motion}		Evaluate motion text and replace it with the
 			(same risk model as `cp`). On error the buffer is
 			untouched and the error is echoed.
 c!!			Evaluate the innermost form and replace it.
+cvp{motion}		Evaluate motion and show its result as virtual lines.
+cvpp			Evaluate the innermost form as virtual lines.
+cv!			Clear virtual results in the current buffer.
+{count}cv!		Clear virtual results in all buffers.
+cvg			Preview the nearest virtual result.
+cvL			Open the nearest virtual result in the history preview.
+:Clear			Clear virtual results in the current buffer.
+:Clear!			Clear virtual results in all buffers.
 :Last			Open eval output in a preview window and follow the
 			newest eval: while open it refreshes as you evaluate.
 			Closing it stops the tracking.
 :{count}Last		Pin the preview to the {count}th-newest entry (`:2Last`
 			= one before the latest). A pinned preview does not
 			follow; re-run bare :Last to resume following.
+
+STACKTRACES                                     *campfire-stacktrace*
+:Stacktrace		Show the current session's last error in quickfix.
+:Stacktrace {expr}	Show {expr}'s error in quickfix.
 
 DOCUMENTATION                                   *campfire-docs*
 :Doc {symbol}		Open docs in scratch buffer.
