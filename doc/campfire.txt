@@ -197,8 +197,7 @@ signature, source, and formatting request wrappers over Campfire data
 APIs.
 
 COMPLETION                                      *campfire-completion*
-Buffer-local 'omnifunc' is set to campfire#omnifunc on connect, so |i_CTRL-X_CTRL-O|
-completes with no extra setup.
+When buffer-local 'omnifunc' is empty, Campfire sets it to campfire#omnifunc.
 
 For |nvim-cmp|, the source self-registers as `campfire` when cmp is installed
 (via after/plugin, like cmp-buffer), so just name it in your clojure sources —

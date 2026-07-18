@@ -196,7 +196,9 @@ xnoremap <silent> <Plug>CampfireFilter :<C-U>call <SID>filter_op(visualmode())<C
 nnoremap <silent> <Plug>CampfireCountFilter :<C-U>call <SID>filter_op(v:count)<CR>
 
 function! campfire#activate() abort
-  setlocal omnifunc=campfire#omnifunc
+  if empty(&l:omnifunc)
+    setlocal omnifunc=campfire#omnifunc
+  endif
 
   command! -buffer -bang -bar -complete=customlist,campfire#connect_complete -nargs=*
         \ Connect exe campfire#connect_command(<line1>, <count>, +'<range>', <bang>0, <q-mods>, <q-args>, [<f-args>])
