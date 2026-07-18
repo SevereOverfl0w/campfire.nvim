@@ -173,6 +173,89 @@ function! campfire#stacktrace_command(expr) abort
   return luaeval("require('campfire.stacktrace').command({ expr = _A })", a:expr)
 endfunction
 
+function! s:actually_input(...) abort
+  return call(function('input'), a:000)
+endfunction
+
+function! s:histswap(list) abort
+  let old = []
+  for i in range(1, histnr('@') * (histnr('@') > 0))
+    call add(old, histget('@', i))
+  endfor
+  call histdel('@')
+  for entry in a:list
+    call histadd('@', entry)
+  endfor
+  return old
+endfunction
+
+function! s:input(default) abort
+  if !exists('g:CAMPFIRE_HISTORY') || type(g:CAMPFIRE_HISTORY) != type([])
+    unlet! g:CAMPFIRE_HISTORY
+    let g:CAMPFIRE_HISTORY = []
+  endif
+  try
+    let s:prompt_input = bufnr('%')
+    let g:campfire_prompt_bufnr = s:prompt_input
+    let s:prompt_oldhist = s:histswap(g:CAMPFIRE_HISTORY)
+    let ns = luaeval("require('campfire.runtime').ns({bufnr = _A})", s:prompt_input)
+    return s:actually_input((empty(ns) ? 'user' : ns) . '=> ', a:default, 'customlist,campfire#eval_complete')
+  finally
+    unlet! s:prompt_input g:campfire_prompt_bufnr
+    if exists('s:prompt_oldhist')
+      let g:CAMPFIRE_HISTORY = s:histswap(s:prompt_oldhist)
+      unlet s:prompt_oldhist
+    endif
+  endtry
+endfunction
+
+function! s:inputclose() abort
+  let l = substitute(getcmdline(), '"\%(\\.\|[^"]\)*"\|\\.', '', 'g')
+  let open = len(substitute(l, '[^(]', '', 'g'))
+  let close = len(substitute(l, '[^)]', '', 'g'))
+  return open - close == 1 ? ")\<CR>" : ')'
+endfunction
+
+function! s:inputeval() abort
+  let input = s:input('')
+  redraw
+  if input !=# ''
+    execute campfire#eval_command('auto', line('.'), line('.'), 0, 0, '', input)
+  endif
+  return ''
+endfunction
+
+function! s:recall() abort
+  try
+    cnoremap <expr> ) <SID>inputclose()
+    let input = s:input('(')
+    if input =~# '^(\=$'
+      return ''
+    endif
+    return luaeval("require('campfire.eval').recall(_A)", input)
+  finally
+    silent! cunmap )
+  endtry
+endfunction
+
+function! s:edit_op(type) abort
+  try
+    let code = luaeval("require('campfire.operator').extract(_A).code", a:type)
+    let default = substitute(substitute(substitute(code,
+          \ "\s*;[^\n\"]*\\%(\n\\@=\\|$\\)", '', 'g'),
+          \ '\n\+\s*', ' ', 'g'),
+          \ '^\s*', '', '')
+    call feedkeys(eval('"\'.&cedit.'"') . "\<Home>", 'n')
+    let input = s:input(default)
+    if input !=# ''
+      execute campfire#eval_command('auto', line('.'), line('.'), 0, 0, '', input)
+    endif
+  catch
+    echoerr v:exception
+  endtry
+  return ''
+endfunction
+
 nnoremap <silent> <Plug>CampfirePrint :<C-U>set opfunc=<SID>print_op<CR>g@
 xnoremap <silent> <Plug>CampfirePrint :<C-U>call <SID>print_op(visualmode())<CR>
 nnoremap <silent> <Plug>CampfireCountPrint :<C-U>call <SID>print_op(v:count)<CR>
@@ -194,6 +277,17 @@ nnoremap <silent> <Plug>CampfireCountMacroExpand1 :<C-U>call <SID>macroexpand_se
 nnoremap <silent> <Plug>CampfireFilter :<C-U>set opfunc=<SID>filter_op<CR>g@
 xnoremap <silent> <Plug>CampfireFilter :<C-U>call <SID>filter_op(visualmode())<CR>
 nnoremap <silent> <Plug>CampfireCountFilter :<C-U>call <SID>filter_op(v:count)<CR>
+nnoremap <Plug>CampfireEdit :<C-U>set opfunc=<SID>edit_op<CR>g@
+xnoremap <Plug>CampfireEdit :<C-U>call <SID>edit_op(visualmode())<CR>
+nnoremap <Plug>CampfireCountEdit :<C-U>call <SID>edit_op(v:count)<CR>
+nnoremap <Plug>CampfirePrompt :exe <SID>inputeval()<CR>
+noremap! <Plug>CampfireRecall <C-R>=<SID>recall()<CR>
+
+augroup campfire_eval
+  autocmd!
+  autocmd CmdWinEnter @ if exists('s:prompt_input') | setlocal filetype=clojure | endif
+  autocmd CmdWinLeave @ if exists('s:prompt_input') | setlocal filetype< omnifunc< | endif
+augroup END
 
 function! campfire#activate() abort
   if empty(&l:omnifunc)
@@ -254,6 +348,13 @@ function! campfire#activate() abort
   call s:map('n', 'c!',  '<Plug>CampfireFilter')
   call s:map('x', 'c!',  '<Plug>CampfireFilter')
   call s:map('n', 'c!!', '<Plug>CampfireCountFilter')
+  call s:map('n', 'cq', '<Plug>CampfireEdit')
+  call s:map('n', 'cqq', '<Plug>CampfireCountEdit')
+  call s:map('n', 'cqp', '<Plug>CampfirePrompt')
+  call s:map('n', 'cqc', '<Plug>CampfirePrompt' . &cedit . 'i')
+  call s:map('i', '<C-R>(', '<Plug>CampfireRecall')
+  call s:map('c', '<C-R>(', '<Plug>CampfireRecall')
+  call s:map('s', '<C-R>(', '<Plug>CampfireRecall')
 
   if exists('#User#CampfireActivate')
     doautocmd <nomodeline> User CampfireActivate

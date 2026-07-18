@@ -108,6 +108,13 @@ EVALUATION                                      *campfire-eval*
 :Eval {expr}		Evaluate in detected runtime.
 cp{motion}		Evaluate and print motion text.
 cpp			Evaluate the innermost form at the cursor.
+cqp			Prompt for code to evaluate and print. Tab completes.
+cqc			Open command-line window for prompt input.
+cq{motion}		Prompt with motion text prefilled.
+cqq			Prompt with the innermost form prefilled.
+<C-R>(			In Insert, command-line, or Select mode, evaluate code
+			and insert its result. A lone `(` is prefilled; `)`
+			auto-submits its matching form.
 c!{motion}		Evaluate motion text and replace it with the
 			printed value. User session, so side-effects fire
 			(same risk model as `cp`). On error the buffer is
@@ -218,6 +225,9 @@ Function, var → Variable, namespace → Module, …).
 CONFIGURATION                                   *campfire-configuration*
 Use require('campfire').setup({ history_size = 100 }) to override
 defaults. :checkhealth campfire reports health information.
+
+`g:CAMPFIRE_HISTORY` holds cqp and cq prompt history. It stays separate from
+normal command-line history.
 
 PRETTY-PRINT                                    *campfire-pretty*
 

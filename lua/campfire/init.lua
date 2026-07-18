@@ -354,11 +354,11 @@ end
 -- replace the trailing `keyword` with `__prefix__`. Anything after the
 -- cursor is dropped — cmdline completion always fires at end of input
 -- in practice, and cider-nrepl tolerates unbalanced forms.
-local function cmdline_context(L, P, lead, keyword)
+local function cmdline_context(L, P, lead, keyword, prompt)
   if not L or L == '' then return '__prefix__' end
   local before_cursor = L:sub(1, P or #L)
   local _, body_start = before_cursor:find('^%S+%s+')
-  local body = body_start and before_cursor:sub(body_start + 1) or before_cursor
+  local body = prompt and before_cursor or (body_start and before_cursor:sub(body_start + 1) or before_cursor)
   if lead ~= '' and body:sub(-#lead) == lead then
     return body:sub(1, #body - #keyword) .. '__prefix__'
   end
@@ -374,8 +374,12 @@ handlers.eval_complete = function(args)
   if not client then return {} end
   local ok, completion = pcall(require, 'campfire.completion')
   if not ok then return {} end
-  local context = cmdline_context(L, P, lead, keyword)
-  local items = completion.complete(client, keyword, { ns = runtime.ns(), context = context })
+  local prompt_bufnr = vim.g.campfire_prompt_bufnr
+  local context = cmdline_context(L, P, lead, keyword, prompt_bufnr ~= nil)
+  local items = completion.complete(client, keyword, {
+    ns = runtime.ns(prompt_bufnr and { bufnr = prompt_bufnr } or {}),
+    context = context,
+  })
   local out = {}
   for _, item in ipairs(items) do
     if item.word and item.word ~= '' then out[#out + 1] = prefix .. item.word end

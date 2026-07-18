@@ -332,6 +332,46 @@ function M.foreground(client, handle, opts)
   return result
 end
 
+local function recall(client, code)
+  if not client then
+    client = current_client()
+    if not client then return '' end
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local values, failed = {}, false
+  local handle = M.with_prep(client, {
+    code = code,
+    runtime = runtime.detect({ bufnr = bufnr }),
+    ns = runtime.ns({ bufnr = bufnr }),
+    line = vim.api.nvim_win_get_cursor(0)[1],
+    column = 1,
+    file = vim.api.nvim_buf_get_name(bufnr),
+    bufnr = bufnr,
+    silent = true,
+  }, function(message)
+    if message.value == SHADOW_EXCEPTION or message.ex
+        or vim.tbl_contains(message.status or {}, 'eval-error') then
+      failed = true
+    elseif message.value then
+      values[#values + 1] = message.value
+    end
+  end)
+  if not handle then return '' end
+
+  local ok = pcall(M.foreground, client, handle, {})
+  if not ok or failed then return '' end
+  return table.concat(values, ' ')
+end
+
+-- Evaluates code for <C-R>(.  Eval failures expand to nothing, like
+-- vim-fireplace's command-line recall.
+function M.recall(code)
+  return recall(nil, code)
+end
+
+M._recall = recall
+
 local function range_code(line1, line2)
   return table.concat(vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false), '\n')
 end
