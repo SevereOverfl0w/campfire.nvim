@@ -114,6 +114,34 @@ function M.doc_url(symbol)
   return 'campfire://doc/' .. munge_part(symbol)
 end
 
+-- Prepare the campfire:// scratch buffers for :mksession, which records every
+-- listed buffer by name and cannot restore a nofile window: for those it writes
+-- `enew` + `file <name>`, an empty husk nothing refills.
+--
+-- A doc buffer is worth keeping, its URL carries the symbol. Handed to the write
+-- as an ordinary named buffer it is recorded as `edit campfire://doc/…` instead,
+-- and on restore that read fires the BufReadCmd, which looks the symbol up again
+-- and fills the window — the same route :edit takes on a live doc buffer, and
+-- the same trick :mksession plays with term:// buffers. buftype goes back on the
+-- next tick, once the synchronous write is done.
+--
+-- The eval preview and macroexpand buffers can't be rebuilt — history lives in
+-- memory and the macroexpand URL holds only a label — so they go, and :Last /
+-- :MacroExpand make new ones on demand.
+function M.session_write()
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    local name = vim.api.nvim_buf_get_name(bufnr)
+    if name:match('^campfire://doc/') then
+      vim.bo[bufnr].buftype = ''
+      vim.schedule(function()
+        if vim.api.nvim_buf_is_valid(bufnr) then vim.bo[bufnr].buftype = 'nofile' end
+      end)
+    elseif name:match('^campfire://') then
+      pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+    end
+  end
+end
+
 function M.parse_doc_url(name)
   local rest = name:match('^campfire://doc/(.+)$')
   if not rest then return nil end

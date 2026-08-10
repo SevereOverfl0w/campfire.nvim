@@ -16,6 +16,9 @@ augroup campfire
   autocmd!
   autocmd FileType clojure call campfire#activate()
   autocmd BufReadCmd campfire://doc/* call luaeval("require('campfire.ui').bufread_doc()")
+  if exists('##SessionWritePre')
+    autocmd SessionWritePre * call luaeval("require('campfire.ui').session_write()")
+  endif
 augroup END
 
 command! -bar -bang -nargs=* -complete=customlist,campfire#connect_complete Connect
